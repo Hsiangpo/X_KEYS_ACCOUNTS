@@ -183,7 +183,6 @@ def test_update_rate_limit_state_from_headers() -> None:
     try:
         client._update_rate_limit_state(
             {
-                "x-rate-limit-limit": "300",
                 "x-rate-limit-remaining": "0",
                 "x-rate-limit-reset": "170",
             }
@@ -191,10 +190,8 @@ def test_update_rate_limit_state_from_headers() -> None:
     finally:
         client.close()
 
-    assert client._rate_limit_limit == 300
     assert client._rate_limit_remaining == 0
     assert client._rate_limit_reset == 170
-    assert any("limit=300" in line for line in logs)
     assert any("reset_bj=" in line for line in logs)
     assert any("1970-01-01" in line for line in logs)
 
@@ -241,31 +238,6 @@ def test_wait_for_available_quota_skips_when_remaining_above_threshold(monkeypat
         client.close()
 
     assert waited == []
-
-
-def test_wait_for_available_quota_uses_pacing_when_usage_is_high(monkeypatch) -> None:
-    waited: list[float] = []
-    logs: list[str] = []
-    client = XProtocolClient(cookies=[], logger=logs.append)
-    try:
-        client._rate_limit_limit = 100
-        client._rate_limit_remaining = 20
-        client._rate_limit_reset = 130
-        monkeypatch.setattr(x_protocol_client_module, "DEFAULT_RATE_LIMIT_PACING_USAGE_RATIO", 0.3)
-        monkeypatch.setattr(x_protocol_client_module, "DEFAULT_RATE_LIMIT_PACING_FACTOR", 1.0)
-        monkeypatch.setattr(x_protocol_client_module, "DEFAULT_RATE_LIMIT_MIN_INTERVAL_SECONDS", 0.1)
-        monkeypatch.setattr(x_protocol_client_module, "DEFAULT_RATE_LIMIT_MAX_INTERVAL_SECONDS", 10.0)
-        monkeypatch.setattr(x_protocol_client_module.time, "time", lambda: 100.0)
-        monkeypatch.setattr(x_protocol_client_module.time, "sleep", lambda seconds: waited.append(seconds))
-
-        client._wait_for_available_quota(path="/i/api/graphql/example/SearchTimeline")
-    finally:
-        client.close()
-
-    expected = (130 - 100 + x_protocol_client_module.DEFAULT_RATE_LIMIT_RESET_BUFFER_SECONDS) / 20
-    assert len(waited) == 1
-    assert abs(waited[0] - expected) < 1e-9
-    assert any("平滑节流等待" in line for line in logs)
 
 
 def test_get_json_with_retry_waits_proactively_before_request(monkeypatch) -> None:

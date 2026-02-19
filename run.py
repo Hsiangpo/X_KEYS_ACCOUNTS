@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import date
+from dataclasses import dataclass
 from pathlib import Path
 import sys
 from typing import Callable
@@ -45,6 +46,11 @@ def _parse_args() -> argparse.Namespace:
         default=str(DEFAULT_COOKIES_FILE),
         help=f"Cookie storage path (default: {DEFAULT_COOKIES_FILE})",
     )
+    parser.add_argument(
+        "--cookies-pool-file",
+        default="",
+        help="Optional cookie pool file, one cookies.json path per line.",
+    )
     return parser.parse_args()
 
 
@@ -60,6 +66,60 @@ def _probe_cookies(cookies: list[dict]) -> bool:
         return client.verify_credentials()
     finally:
         client.close()
+
+
+@dataclass
+class SessionSlot:
+    """One reusable authenticated session in pool."""
+
+    slot_id: int
+    cookies_path: Path
+    manager: SessionManager
+    client: XProtocolClient
+
+
+def _resolve_cookie_pool_paths(primary_path: Path, pool_lines: list[str]) -> list[Path]:
+    paths: list[Path] = []
+    seen: set[str] = set()
+
+    def _append(path: Path) -> None:
+        normalized = str(path.expanduser().resolve()).casefold()
+        if normalized in seen:
+            return
+        seen.add(normalized)
+        paths.append(path)
+
+    _append(primary_path)
+    for line in pool_lines:
+        value = line.strip()
+        if not value or value.startswith("#"):
+            continue
+        _append(Path(value))
+    return paths
+
+
+def _build_session_slots(cookie_paths: list[Path], logger: Callable[[str], None]) -> list[SessionSlot]:
+    slots: list[SessionSlot] = []
+    for index, cookie_path in enumerate(cookie_paths, start=1):
+        manager = SessionManager(cookies_path=cookie_path)
+        try:
+            cookies = manager.ensure_cookies(_probe_cookies)
+            client = XProtocolClient(cookies=cookies, logger=logger)
+        except Exception as exc:
+            logger(
+                f"[登录] 槽位={index} 初始化失败 cookies={cookie_path} 错误={exc}"
+            )
+            continue
+        slots.append(
+            SessionSlot(
+                slot_id=index,
+                cookies_path=cookie_path,
+                manager=manager,
+                client=client,
+            )
+        )
+        logger(f"[登录] 槽位={index} 会话就绪 cookies={cookie_path}")
+    return slots
 
 
 def _empty_error_record(account: AccountSpec, keyword: str, error: str) -> dict:
@@ -131,6 +191,8 @@ def main() -> int:
 
     accounts = load_accounts(_read_lines(Path(args.accounts_file)))
     keywords = load_keywords(_read_lines(Path(args.keys_file)))
+    cookie_pool_lines = _read_lines(Path(args.cookies_pool_file)) if args.cookies_pool_file else []
+    cookie_paths = _resolve_cookie_pool_paths(Path(args.cookies_file), cookie_pool_lines)
     if not accounts:
         print("[错误] Accounts 文件过滤后为空。")
         return 2
@@ -141,7 +203,8 @@ def main() -> int:
     writer = JsonlWriter(output_dir=DEFAULT_OUTPUT_DIR)
     log_path = writer.run_dir / "crawl.log"
     total_rows = 0
-    client: XProtocolClient | None = None
+    task_index = 0
+    slots: list[SessionSlot] = []
     original_stdout = sys.stdout
     original_stderr = sys.stderr
     with log_path.open("w", encoding="utf-8") as log_fp:
@@ -149,16 +212,25 @@ def main() -> int:
         sys.stderr = TeeStream(original_stderr, log_fp)
         logger = lambda message: print(message, flush=True)
         print(f"[日志] 运行日志文件: {log_path}", flush=True)
-        session_manager = SessionManager(cookies_path=Path(args.cookies_file))
-        cookies = session_manager.ensure_cookies(_probe_cookies)
-        client = XProtocolClient(cookies=cookies, logger=logger)
+        logger(f"[登录] 准备账号池，候选会话数={len(cookie_paths)}")
+        slots = _build_session_slots(cookie_paths, logger)
+        if not slots:
+            print("[错误] 账号池初始化失败：无可用会话。", flush=True)
+            writer.close()
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
+            return 2
         try:
             for account in accounts:
                 for keyword in keywords:
-                    logger(f"[爬取] 账号={account.handle} 关键词={keyword}")
+                    slot = slots[task_index % len(slots)]
+                    task_index += 1
+                    logger(
+                        f"[爬取] 槽位={slot.slot_id} 账号={account.handle} 关键词={keyword}"
+                    )
                     try:
                         total_rows += _crawl_keyword(
-                            client=client,
+                            client=slot.client,
                             account=account,
                             keyword=keyword,
                             start_date=start_date,
@@ -168,13 +240,15 @@ def main() -> int:
                             logger=logger,
                         )
                     except AuthenticationError:
-                        logger("[鉴权] 会话失效，执行一次自动重登...")
-                        cookies = session_manager.refresh_cookies(_probe_cookies)
-                        client.close()
-                        client = XProtocolClient(cookies=cookies, logger=logger)
+                        logger(
+                            f"[鉴权] 槽位={slot.slot_id} 会话失效，执行一次自动重登..."
+                        )
+                        cookies = slot.manager.refresh_cookies(_probe_cookies)
+                        slot.client.close()
+                        slot.client = XProtocolClient(cookies=cookies, logger=logger)
                         try:
                             total_rows += _crawl_keyword(
-                                client=client,
+                                client=slot.client,
                                 account=account,
                                 keyword=keyword,
                                 start_date=start_date,
@@ -192,11 +266,12 @@ def main() -> int:
                                 )
                             )
                             logger(
-                                f"[鉴权] 重登后仍失败 账号={account.handle} 关键词={keyword}"
+                                f"[鉴权] 槽位={slot.slot_id} 重登后仍失败 "
+                                f"账号={account.handle} 关键词={keyword}"
                             )
         finally:
-            if client is not None:
-                client.close()
+            for slot in slots:
+                slot.client.close()
             writer.close()
             print(f"[结束] 总写入行数={total_rows}", flush=True)
             print(f"[结束] 数据文件={writer.output_path}", flush=True)

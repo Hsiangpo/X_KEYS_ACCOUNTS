@@ -25,6 +25,12 @@ generated in-repo.
 python run.py <start_date> <end_date>
 ```
 
+With account pool:
+
+```bash
+python run.py <start_date> <end_date> --cookies-pool-file docs/CookiesPool.txt
+```
+
 Date format: `YYYY_M_D` (inclusive boundary days).
 
 Each run writes:
@@ -45,6 +51,10 @@ Each run writes:
 - Quota-aware proactive scheduling is enabled:
   when `x-rate-limit-remaining <= X_RATE_LIMIT_PROACTIVE_THRESHOLD`,
   next request waits until reset window to reduce continuous `429`.
-- Adaptive pacing is enabled:
-  when quota usage enters high-watermark (`X_RATE_LIMIT_PACING_USAGE_RATIO`),
-  crawler smooths request interval by remaining quota and reset time.
+
+## Account Pool
+
+- `--cookies-pool-file` is optional; each line is one `cookies.json` path.
+- The primary `--cookies-file` is always included as slot 1.
+- Slots are used in round-robin per `(account, keyword)` task.
+- If one slot auth expires, only that slot auto-relogs.
