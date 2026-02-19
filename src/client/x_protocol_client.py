@@ -20,7 +20,11 @@ from src.config import (
     DEFAULT_MAX_RATE_LIMIT_WAIT_SECONDS,
     DEFAULT_MAX_RETRIES,
     DEFAULT_PAGE_SIZE,
+    DEFAULT_RATE_LIMIT_MAX_INTERVAL_SECONDS,
     DEFAULT_RATE_LIMIT_FALLBACK_WAIT_SECONDS,
+    DEFAULT_RATE_LIMIT_MIN_INTERVAL_SECONDS,
+    DEFAULT_RATE_LIMIT_PACING_FACTOR,
+    DEFAULT_RATE_LIMIT_PACING_USAGE_RATIO,
     DEFAULT_RATE_LIMIT_PROACTIVE_THRESHOLD,
     DEFAULT_RATE_LIMIT_RESET_BUFFER_SECONDS,
     DEFAULT_SEARCH_TIMELINE_QUERY_ID,
@@ -48,6 +52,7 @@ class XProtocolClient:
         self._logger = logger
         self._features = _default_features()
         self._transaction_context: XClientTransaction | None = None
+        self._rate_limit_limit: int | None = None
         self._rate_limit_remaining: int | None = None
         self._rate_limit_reset: int | None = None
 
@@ -292,18 +297,27 @@ class XProtocolClient:
         return int(text)
 
     def _update_rate_limit_state(self, headers: Mapping[str, Any]) -> None:
+        self._rate_limit_limit = self._parse_int_header(headers, "x-rate-limit-limit")
         self._rate_limit_remaining = self._parse_int_header(headers, "x-rate-limit-remaining")
         self._rate_limit_reset = self._parse_int_header(headers, "x-rate-limit-reset")
 
-        if self._rate_limit_remaining is None and self._rate_limit_reset is None:
+        if (
+            self._rate_limit_limit is None
+            and self._rate_limit_remaining is None
+            and self._rate_limit_reset is None
+        ):
             return
 
         reset_bj = self._format_reset_time_beijing(self._rate_limit_reset)
+        usage_ratio = self._rate_limit_usage_ratio()
+        usage_text = f"{usage_ratio:.3f}" if usage_ratio is not None else "unknown"
         self._log(
             "[配额] "
+            f"limit={self._rate_limit_limit} "
             f"remaining={self._rate_limit_remaining} "
             f"reset={self._rate_limit_reset} "
-            f"reset_bj={reset_bj}"
+            f"reset_bj={reset_bj} "
+            f"usage_ratio={usage_text}"
         )
 
     def _wait_for_available_quota(self, *, path: str) -> None:
@@ -312,24 +326,61 @@ class XProtocolClient:
         if remaining is None or reset_ts is None:
             return
 
-        if remaining > DEFAULT_RATE_LIMIT_PROACTIVE_THRESHOLD:
-            return
-
         now = int(time.time())
         if reset_ts <= now:
             return
 
+        if remaining <= DEFAULT_RATE_LIMIT_PROACTIVE_THRESHOLD:
+            wait_seconds = min(
+                max(1, reset_ts - now + DEFAULT_RATE_LIMIT_RESET_BUFFER_SECONDS),
+                DEFAULT_MAX_RATE_LIMIT_WAIT_SECONDS,
+            )
+            reset_bj = self._format_reset_time_beijing(reset_ts)
+            self._log(
+                "[配额] "
+                f"接口={path} 剩余={remaining} 阈值={DEFAULT_RATE_LIMIT_PROACTIVE_THRESHOLD} "
+                f"重置时间戳={reset_ts} 重置北京时间={reset_bj} 主动等待={wait_seconds}s"
+            )
+            time.sleep(wait_seconds)
+            return
+
+        self._wait_for_rate_limit_pacing(path=path, remaining=remaining, reset_ts=reset_ts)
+
+    def _wait_for_rate_limit_pacing(self, *, path: str, remaining: int, reset_ts: int) -> None:
+        usage_ratio = self._rate_limit_usage_ratio()
+        if usage_ratio is None:
+            return
+        if usage_ratio < DEFAULT_RATE_LIMIT_PACING_USAGE_RATIO:
+            return
+
+        seconds_to_reset = reset_ts - time.time() + DEFAULT_RATE_LIMIT_RESET_BUFFER_SECONDS
+        if seconds_to_reset <= 0:
+            return
+
+        base_wait = (seconds_to_reset / max(remaining, 1)) * DEFAULT_RATE_LIMIT_PACING_FACTOR
         wait_seconds = min(
-            max(1, reset_ts - now + DEFAULT_RATE_LIMIT_RESET_BUFFER_SECONDS),
-            DEFAULT_MAX_RATE_LIMIT_WAIT_SECONDS,
+            DEFAULT_RATE_LIMIT_MAX_INTERVAL_SECONDS,
+            max(DEFAULT_RATE_LIMIT_MIN_INTERVAL_SECONDS, base_wait),
         )
+        if wait_seconds <= 0:
+            return
+
         reset_bj = self._format_reset_time_beijing(reset_ts)
         self._log(
             "[配额] "
-            f"接口={path} 剩余={remaining} 阈值={DEFAULT_RATE_LIMIT_PROACTIVE_THRESHOLD} "
-            f"重置时间戳={reset_ts} 重置北京时间={reset_bj} 主动等待={wait_seconds}s"
+            f"接口={path} 使用率={usage_ratio:.3f} "
+            f"重置北京时间={reset_bj} 平滑节流等待={wait_seconds:.2f}s "
+            f"(阈值={DEFAULT_RATE_LIMIT_PACING_USAGE_RATIO})"
         )
         time.sleep(wait_seconds)
+
+    def _rate_limit_usage_ratio(self) -> float | None:
+        if self._rate_limit_limit is None or self._rate_limit_remaining is None:
+            return None
+        if self._rate_limit_limit <= 0:
+            return None
+        usage = 1.0 - (self._rate_limit_remaining / self._rate_limit_limit)
+        return max(0.0, min(1.0, usage))
 
     def _format_reset_time_beijing(self, reset_ts: int | None) -> str:
         if reset_ts is None:

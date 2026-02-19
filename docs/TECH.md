@@ -37,6 +37,7 @@
 - `404`：强制刷新事务上下文后重试（应对 `nx` 上下文过期）。
 - `429`：优先按 `x-rate-limit-reset` 等待到窗口重置；若无该头，走保守等待。
 - 配额感知调度：当响应头给出 `x-rate-limit-remaining <= X_RATE_LIMIT_PROACTIVE_THRESHOLD` 且未到 `x-rate-limit-reset`，下一次请求前主动等待，减少连续 `429`。
+- 平滑节流：当配额使用率达到高水位（`usage_ratio >= X_RATE_LIMIT_PACING_USAGE_RATIO`）时，按“距重置时间 / 剩余额度”动态计算间隔，降低打满后连续 `429` 的概率。
 - 日志观测：配额日志同时输出原始 `reset` 时间戳和北京时间（`reset_bj` / `重置北京时间`）。
 - `5xx`：指数退避重试。
 - 连续空页：`AccountSearchCrawler(max_empty_pages=3)` 自动停止，避免无命中时长时间翻页。
@@ -48,6 +49,10 @@
 - `X_RATE_LIMIT_RESET_BUFFER_SECONDS`：到达 `reset` 后额外缓冲秒数（默认 `2`）。
 - `X_MAX_RATE_LIMIT_WAIT_SECONDS`：单次最大等待秒数上限（默认 `900`）。
 - `X_RATE_LIMIT_FALLBACK_WAIT_SECONDS`：缺失 `reset` 时的保守等待上限（默认 `180`）。
+- `X_RATE_LIMIT_PACING_USAGE_RATIO`：平滑节流触发使用率阈值（默认 `0.35`）。
+- `X_RATE_LIMIT_PACING_FACTOR`：平滑节流系数（默认 `1.15`）。
+- `X_RATE_LIMIT_MIN_INTERVAL_SECONDS`：平滑节流最小间隔秒数（默认 `0.5`）。
+- `X_RATE_LIMIT_MAX_INTERVAL_SECONDS`：平滑节流最大间隔秒数（默认 `15`）。
 
 ## 6. 当前实现文件
 - `src/client/x_protocol_client.py`：协议请求、重试、事务头注入。

@@ -45,3 +45,6 @@ Each run writes:
 - Quota-aware proactive scheduling is enabled:
   when `x-rate-limit-remaining <= X_RATE_LIMIT_PROACTIVE_THRESHOLD`,
   next request waits until reset window to reduce continuous `429`.
+- Adaptive pacing is enabled:
+  when quota usage enters high-watermark (`X_RATE_LIMIT_PACING_USAGE_RATIO`),
+  crawler smooths request interval by remaining quota and reset time.
