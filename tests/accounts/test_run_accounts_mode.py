@@ -84,3 +84,33 @@ def test_run_accounts_mode_exits_from_menu(
     monkeypatch.setattr("builtins.input", lambda _: "5")
 
     assert run_module._run_accounts_mode() == 0
+
+
+def test_main_rejects_accounts_mode(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(run_module.sys, "argv", ["run.py", "accounts"])
+
+    code = run_module.main()
+    captured = capsys.readouterr()
+
+    assert code == 2
+    assert "暂时禁用会话池管理模式" in captured.err
+
+
+def test_main_rejects_cookies_pool_arg(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        run_module.sys,
+        "argv",
+        [
+            "run.py",
+            "2025_1_1",
+            "2025_1_2",
+            "--cookies-pool-file",
+            "docs/CookiesPool.txt",
+        ],
+    )
+
+    code = run_module.main()
+    captured = capsys.readouterr()
+
+    assert code == 2
+    assert "暂时禁用会话池功能" in captured.err

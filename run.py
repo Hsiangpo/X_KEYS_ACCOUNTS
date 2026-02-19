@@ -482,7 +482,8 @@ def _crawl_keyword(
 def main() -> int:
     argv = sys.argv[1:]
     if _is_accounts_mode(argv):
-        return _run_accounts_mode()
+        print("[错误] 当前版本暂时禁用会话池管理模式。", file=sys.stderr)
+        return 2
 
     args = _parse_args(argv)
     try:
@@ -495,11 +496,15 @@ def main() -> int:
     if start_date > end_date:
         print("[错误] start_date 不能晚于 end_date", file=sys.stderr)
         return 2
+    if args.cookies_pool_file:
+        print(
+            "[错误] 当前版本暂时禁用会话池功能，请移除 --cookies-pool-file 参数。",
+            file=sys.stderr,
+        )
+        return 2
 
     accounts = load_accounts(_read_lines(Path(args.accounts_file)))
     keywords = load_keywords(_read_lines(Path(args.keys_file)))
-    cookie_pool_lines = _read_lines(Path(args.cookies_pool_file)) if args.cookies_pool_file else []
-    cookie_paths = _resolve_cookie_pool_paths(Path(args.cookies_file), cookie_pool_lines)
     if not accounts:
         print("[错误] Accounts 文件过滤后为空。")
         return 2
@@ -510,8 +515,7 @@ def main() -> int:
     writer = JsonlWriter(output_dir=DEFAULT_OUTPUT_DIR)
     log_path = writer.run_dir / "crawl.log"
     total_rows = 0
-    task_index = 0
-    slots: list[SessionSlot] = []
+    client: XProtocolClient | None = None
     original_stdout = sys.stdout
     original_stderr = sys.stderr
     with log_path.open("w", encoding="utf-8") as log_fp:
@@ -519,25 +523,16 @@ def main() -> int:
         sys.stderr = TeeStream(original_stderr, log_fp)
         logger = lambda message: print(message, flush=True)
         print(f"[日志] 运行日志文件: {log_path}", flush=True)
-        logger(f"[登录] 准备账号池，候选会话数={len(cookie_paths)}")
-        slots = _build_session_slots(cookie_paths, logger)
-        if not slots:
-            print("[错误] 账号池初始化失败：无可用会话。", flush=True)
-            writer.close()
-            sys.stdout = original_stdout
-            sys.stderr = original_stderr
-            return 2
+        session_manager = SessionManager(cookies_path=Path(args.cookies_file))
+        cookies = session_manager.ensure_cookies(_probe_cookies)
+        client = XProtocolClient(cookies=cookies, logger=logger)
         try:
             for account in accounts:
                 for keyword in keywords:
-                    slot = slots[task_index % len(slots)]
-                    task_index += 1
-                    logger(
-                        f"[爬取] 槽位={slot.slot_id} 账号={account.handle} 关键词={keyword}"
-                    )
+                    logger(f"[爬取] 账号={account.handle} 关键词={keyword}")
                     try:
                         total_rows += _crawl_keyword(
-                            client=slot.client,
+                            client=client,
                             account=account,
                             keyword=keyword,
                             start_date=start_date,
@@ -547,15 +542,13 @@ def main() -> int:
                             logger=logger,
                         )
                     except AuthenticationError:
-                        logger(
-                            f"[鉴权] 槽位={slot.slot_id} 会话失效，执行一次自动重登..."
-                        )
-                        cookies = slot.manager.refresh_cookies(_probe_cookies)
-                        slot.client.close()
-                        slot.client = XProtocolClient(cookies=cookies, logger=logger)
+                        logger("[鉴权] 会话失效，执行一次自动重登...")
+                        cookies = session_manager.refresh_cookies(_probe_cookies)
+                        client.close()
+                        client = XProtocolClient(cookies=cookies, logger=logger)
                         try:
                             total_rows += _crawl_keyword(
-                                client=slot.client,
+                                client=client,
                                 account=account,
                                 keyword=keyword,
                                 start_date=start_date,
@@ -573,12 +566,11 @@ def main() -> int:
                                 )
                             )
                             logger(
-                                f"[鉴权] 槽位={slot.slot_id} 重登后仍失败 "
-                                f"账号={account.handle} 关键词={keyword}"
+                                f"[鉴权] 重登后仍失败 账号={account.handle} 关键词={keyword}"
                             )
         finally:
-            for slot in slots:
-                slot.client.close()
+            if client is not None:
+                client.close()
             writer.close()
             print(f"[结束] 总写入行数={total_rows}", flush=True)
             print(f"[结束] 数据文件={writer.output_path}", flush=True)
