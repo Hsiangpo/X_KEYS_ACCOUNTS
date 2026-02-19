@@ -39,7 +39,7 @@ DEFAULT_LOGIN_BROWSER_CHANNELS = tuple(
     if channel.strip()
 )
 
-# Captured via Chrome MCP on 2026-02-19. Can be overridden when X rotates query IDs.
+# SearchTimeline query id. Can be overridden when X rotates IDs.
 DEFAULT_SEARCH_TIMELINE_QUERY_ID = os.getenv(
     "X_SEARCH_TIMELINE_QUERY_ID",
     "cGK-Qeg1XJc2sZ6kgQw_Iw",

@@ -446,7 +446,7 @@ def _sleep_backoff(
 
 
 def _default_features() -> dict[str, bool]:
-    # Captured from real X SearchTimeline request via Chrome MCP.
+    # Feature flags snapshot for SearchTimeline requests.
     return {
         "rweb_video_screen_enabled": False,
         "profile_label_improvements_pcf_label_in_post_enabled": True,
