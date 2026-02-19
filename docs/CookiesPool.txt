@@ -1,0 +1,4 @@
+# Optional extra cookie files for account pool (one path per line).
+# Examples:
+# state/cookies_pool_1.json
+# state/cookies_pool_2.json

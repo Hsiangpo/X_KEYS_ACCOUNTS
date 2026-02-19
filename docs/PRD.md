@@ -19,6 +19,12 @@ python run.py <start_date> <end_date>
 python run.py 2021_9_1 2025_12_30
 ```
 
+账号池管理：
+
+```bash
+python run.py accounts
+```
+
 ### 3. 输入来源
 1. 账号列表文件：`D:\\Develop\\masterpiece\\Spider\\Website\\x\\docs\\Accounts.txt`  
 每行一个 X 账号主页链接（例如 `https://x.com/NBCOlympics`）。
@@ -51,6 +57,7 @@ python run.py 2021_9_1 2025_12_30
 4. 请求失败需具备重试能力（含限流/临时错误场景）。
 5. 需支持配额感知调度：当配额临近耗尽时，按 `x-rate-limit-reset` 主动等待后再继续请求。
 6. 支持可选账号池：允许提供多个 cookie 会话并轮转执行任务。
+7. 需提供账号池交互管理能力：查看账号状态、增加账号、删除账号、按活性检测结果单选异常账号刷新 Cookie。
 
 ### 6. 输出字段（已确认）
 - `account`

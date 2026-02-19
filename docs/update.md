@@ -1,3 +1,14 @@
+## v0.3.2 (2026-02-19)
+
+### 新增
+- 新增 `python run.py accounts` 交互式账号池管理菜单。
+- 新增账号池状态检测（探测活性）与异常槽位单选刷新流程。
+- 新增 `tests/accounts/test_run_accounts_mode.py`，覆盖模式分流与账号池管理核心逻辑。
+
+### 变更
+- `run.py` 支持双入口：`accounts` 管理模式 + 日期区间爬取模式。
+- 补充账号池管理文档（`README.md`、`docs/PRD.md`、`docs/TECH.md`）。
+
 ## v0.3.1 (2026-02-19)
 
 ### 新增

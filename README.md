@@ -31,6 +31,12 @@ With account pool:
 python run.py <start_date> <end_date> --cookies-pool-file docs/CookiesPool.txt
 ```
 
+Manage account pool (interactive):
+
+```bash
+python run.py accounts
+```
+
 Date format: `YYYY_M_D` (inclusive boundary days).
 
 Each run writes:
@@ -58,3 +64,8 @@ Each run writes:
 - The primary `--cookies-file` is always included as slot 1.
 - Slots are used in round-robin per `(account, keyword)` task.
 - If one slot auth expires, only that slot auto-relogs.
+- `python run.py accounts` opens an interactive menu:
+  - list slot status (with cookie liveness probe)
+  - add account (immediate login + validation)
+  - remove slot by index
+  - refresh one bad slot after full liveness check

@@ -54,6 +54,9 @@
 - 文件格式：每行一个 `cookies.json` 路径；支持空行和 `#` 注释。
 - 调度策略：主 `--cookies-file` + pool 文件共同组成槽位，按 `(account, keyword)` 轮转使用。
 - 槽位鉴权失败：仅刷新该槽位会话，不影响其他槽位。
+- 管理入口：`python run.py accounts`（交互菜单）。
+- 管理默认池文件：`docs/CookiesPool.txt`。
+- 菜单动作：查看状态、增加账号、删除账号、检测后单选异常槽位刷新 Cookie。
 
 ## 7. 当前实现文件
 - `src/client/x_protocol_client.py`：协议请求、重试、事务头注入。
